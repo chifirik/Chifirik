@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>WILD FRONTIER — Survival Prototype</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#111;color:#fff;font-family:Arial,sans-serif;touch-action:none}
+#game{position:fixed;inset:0}canvas{display:block}
+#hud{position:fixed;inset:0;pointer-events:none}
+.panel{background:rgba(10,16,13,.72);border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:9px 12px;backdrop-filter:blur(5px)}
+#brand{position:absolute;top:12px;left:12px;font-weight:900;letter-spacing:2px;font-size:13px}
+#stats{position:absolute;top:12px;right:12px;width:145px;font-size:12px}
+.stat{margin:5px 0}.bar{height:7px;background:#333;border-radius:8px;overflow:hidden;margin-top:3px}.fill{height:100%;width:100%;border-radius:8px}
+#resources{position:absolute;top:92px;left:12px;font-size:12px;line-height:1.7}
+#hint{position:absolute;top:50%;left:50%;transform:translate(-50%,-45px);font-size:12px;color:#fff;text-shadow:0 2px 4px #000;text-align:center}
+#cross{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:22px;color:#fff;text-shadow:0 1px 4px #000}
+#joystick{position:absolute;left:22px;bottom:28px;width:118px;height:118px;border-radius:50%;background:rgba(255,255,255,.10);border:2px solid rgba(255,255,255,.3);pointer-events:auto}
+#stick{position:absolute;width:48px;height:48px;left:33px;top:33px;border-radius:50%;background:rgba(255,255,255,.42);border:1px solid rgba(255,255,255,.5)}
+#lookzone{position:absolute;right:0;bottom:0;width:58%;height:65%;pointer-events:auto}
+#actions{position:absolute;right:18px;bottom:25px;display:flex;flex-direction:column;gap:10px;pointer-events:auto}
+.action{width:62px;height:62px;border-radius:50%;border:1px solid rgba(255,255,255,.4);background:rgba(20,30,25,.72);color:#fff;font-weight:bold;font-size:11px}
+#bottom{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);font-size:11px;white-space:nowrap}
+#message{position:absolute;left:50%;top:18%;transform:translateX(-50%);font-size:13px;background:rgba(0,0,0,.65);padding:8px 13px;border-radius:10px;opacity:0;transition:opacity .2s}
+#help{position:absolute;left:12px;bottom:160px;font-size:10px;max-width:145px;color:#ddd}
+@media(min-width:800px){#joystick{width:130px;height:130px}#stick{left:39px;top:39px}}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div id="hud">
+ <div id="brand" class="panel">WILD FRONTIER <span style="color:#9bc77d">/ SURVIVAL</span></div>
+ <div id="stats" class="panel">
+  <div class="stat">❤️ Здоровье <div class="bar"><div id="health" class="fill" style="background:#d95b54"></div></div></div>
+  <div class="stat">🍖 Голод <div class="bar"><div id="hunger" class="fill" style="background:#d9a34d"></div></div></div>
+  <div class="stat">💧 Жажда <div class="bar"><div id="thirst" class="fill" style="background:#55a9d5"></div></div></div>
+ </div>
+ <div id="resources" class="panel">🪵 Дерево: <b id="wood">0</b><br>🪨 Камень: <b id="stone">0</b><br>🌿 Волокно: <b id="fiber">0</b></div>
+ <div id="cross">+</div><div id="hint">Осмотрись и найди дерево или камень</div>
+ <div id="message"></div>
+ <div id="help">Левый круг — движение<br>Правая часть экрана — обзор</div>
+ <div id="joystick"><div id="stick"></div></div>
+ <div id="lookzone"></div>
+ <div id="actions"><button class="action" id="gather">СОБРАТЬ</button><button class="action" id="jump">ПРЫЖОК</button><button class="action" id="eat">ЯГОДЫ</button></div>
+ <div id="bottom" class="panel">ДЕНЬ 1 · Исследуй остров</div>
+</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x9fc4d0);
+scene.fog=new THREE.Fog(0x9fc4d0,35,115);
+const camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.1,180);
+camera.position.set(0,2,8);
+const renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:'low-power'});
+renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+renderer.shadowMap.enabled=false;document.getElementById('game').appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xcce7ff,0x526044,2));
+const sun=new THREE.DirectionalLight(0xffe1b5,2.1);sun.position.set(-25,35,15);scene.add(sun);
+
+const mat=(color,roughness=1)=>new THREE.MeshStandardMaterial({color,roughness});
+const groundMat=mat(0x55734a), trunkMat=mat(0x65452e), leafMat=mat(0x315c3b), rockMat=mat(0x777d7b), grassMat=mat(0x789052);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(220,220),groundMat);ground.rotation.x=-Math.PI/2;ground.position.y=-.08;scene.add(ground);
+const objects=[];
+function addTree(x,z,s=1){
+ const g=new THREE.Group();g.position.set(x,0,z);g.scale.setScalar(s);
+ const trunk=new THREE.Mesh(new THREE.CylinderGeometry(.22,.34,2.4,6),trunkMat);trunk.position.y=1.2;g.add(trunk);
+ const crown=new THREE.Mesh(new THREE.ConeGeometry(1.45,3.4,7),leafMat);crown.position.y=3.25;g.add(crown);
+ const crown2=new THREE.Mesh(new THREE.ConeGeometry(1.12,2.7,7),mat(0x3d7045));crown2.position.y=4.2;g.add(crown2);
+ scene.add(g);objects.push({mesh:g,type:'tree',x,z,hp:3});
+}
+function addRock(x,z,s=1){
+ const m=new THREE.Mesh(new THREE.DodecahedronGeometry(.9,0),rockMat);m.position.set(x,.55*s,z);m.scale.set(1.2*s,.8*s,1*s);m.rotation.set(.2,.5,.1);scene.add(m);objects.push({mesh:m,type:'rock',x,z,hp:3});
+}
+function addBush(x,z){
+ const m=new THREE.Mesh(new THREE.IcosahedronGeometry(.7,1),mat(0x477447));m.position.set(x,.55,z);m.scale.set(1.3,.8,1);scene.add(m);objects.push({mesh:m,type:'bush',x,z,hp:2});
+}
+let seed=9231;function rand(){seed=(seed*1664525+1013904223)>>>0;return seed/4294967296}
+for(let i=0;i<115;i++){let x=(rand()-.5)*150,z=(rand()-.5)*150;if(Math.hypot(x,z)<9)continue;addTree(x,z,.75+rand()*.65)}
+for(let i=0;i<65;i++){let x=(rand()-.5)*145,z=(rand()-.5)*145;if(Math.hypot(x,z)<7)continue;addRock(x,z,.7+rand()*.7)}
+for(let i=0;i<45;i++){let x=(rand()-.5)*100,z=(rand()-.5)*100;if(Math.hypot(x,z)<6)continue;addBush(x,z)}
+// distant low-poly hills
+for(let i=0;i<18;i++){let a=i/18*Math.PI*2;let m=new THREE.Mesh(new THREE.ConeGeometry(10+rand()*7,13+rand()*10,6),mat(0x667b65));m.position.set(Math.cos(a)*88,4,Math.sin(a)*88);scene.add(m)}
+const player={x:0,z:7,y:1.7,yv:0,yaw:0,pitch:0,grounded:true};
+camera.position.set(player.x,player.y,player.z);
+let wood=0,stone=0,fiber=0,health=100,hunger=100,thirst=100,day=0;
+const $=id=>document.getElementById(id);
+function msg(t){$('message').textContent=t;$('message').style.opacity=1;clearTimeout(msg.timer);msg.timer=setTimeout(()=>$('message').style.opacity=0,1500)}
+function updateHUD(){$('wood').textContent=wood;$('stone').textContent=stone;$('fiber').textContent=fiber;$('health').style.width=health+'%';$('hunger').style.width=hunger+'%';$('thirst').style.width=thirst+'%'}
+let joy={x:0,y:0},joyActive=false,joyId=null;
+const joyEl=$('joystick'),stick=$('stick');
+function setJoy(e){const r=joyEl.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=e.clientX-cx,dy=e.clientY-cy,l=Math.hypot(dx,dy),max=38;if(l>max){dx=dx/l*max;dy=dy/l*max}joy.x=dx/max;joy.y=dy/max;stick.style.transform=`translate(${dx}px,${dy}px)`}
+joyEl.addEventListener('pointerdown',e=>{joyActive=true;joyId=e.pointerId;joyEl.setPointerCapture(joyId);setJoy(e)});
+joyEl.addEventListener('pointermove',e=>{if(joyActive&&e.pointerId===joyId)setJoy(e)});
+function releaseJoy(){joyActive=false;joy.x=0;joy.y=0;stick.style.transform='translate(0,0)'}
+joyEl.addEventListener('pointerup',releaseJoy);joyEl.addEventListener('pointercancel',releaseJoy);
+let lookOn=false,lastX=0,lastY=0;
+$('lookzone').addEventListener('pointerdown',e=>{lookOn=true;lastX=e.clientX;lastY=e.clientY;$('lookzone').setPointerCapture(e.pointerId)});
+$('lookzone').addEventListener('pointermove',e=>{if(!lookOn)return;let dx=e.clientX-lastX,dy=e.clientY-lastY;lastX=e.clientX;lastY=e.clientY;player.yaw-=dx*.006;player.pitch=Math.max(-1.15,Math.min(1.15,player.pitch-dy*.004)});
+$('lookzone').addEventListener('pointerup',()=>lookOn=false);$('lookzone').addEventListener('pointercancel',()=>lookOn=false);
+$('jump').onclick=()=>{if(player.grounded){player.yv=6.3;player.grounded=false}};
+$('gather').onclick=()=>{
+ let best=null,dist=4.3;
+ for(const o of objects){if(!o.mesh.visible)continue;let d=Math.hypot(o.x-player.x,o.z-player.z);if(d<dist){dist=d;best=o}}
+ if(!best){msg('Подойди ближе к дереву, камню или кусту');return}
+ best.hp--;
+ if(best.type==='tree'){wood+=12;msg(' +12 дерева')}
+ else if(best.type==='rock'){stone+=9;msg(' +9 камня')}
+ else {fiber+=6;msg(' +6 волокна')}
+ if(best.hp<=0){scene.remove(best.mesh);best.mesh.visible=false}
+ updateHUD();
+};
+$('eat').onclick=()=>{if(fiber>=3){fiber-=3;hunger=Math.min(100,hunger+12);thirst=Math.min(100,thirst+3);msg('Ты перекусил ягодами')}else msg('Нужно 3 волокна для ягод');updateHUD()};
+let last=performance.now(),elapsed=0;
+function animate(now){
+ requestAnimationFrame(animate);let dt=Math.min((now-last)/1000,.04);last=now;elapsed+=dt;
+ const forward=new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
+ const right=new THREE.Vector3(Math.cos(player.yaw),0,-Math.sin(player.yaw));
+ let move=new THREE.Vector3().addScaledVector(forward,-joy.y).addScaledVector(right,joy.x);
+ if(move.length()>1)move.normalize();
+ player.x+=move.x*5.2*dt;player.z+=move.z*5.2*dt;
+ player.yv-=16*dt;player.y+=player.yv*dt;if(player.y<1.7){player.y=1.7;player.yv=0;player.grounded=true}
+ camera.position.set(player.x,player.y,player.z);camera.rotation.order='YXZ';camera.rotation.y=player.yaw;camera.rotation.x=player.pitch;
+ hunger=Math.max(0,hunger-dt*.10);thirst=Math.max(0,thirst-dt*.15);
+ if(hunger===0||thirst===0)health=Math.max(0,health-dt*.5);
+ if(Math.floor(elapsed/90)!==day){day=Math.floor(elapsed/90);$('bottom').textContent='ДЕНЬ '+(day+1)+' · Исследуй остров'}
+ const cycle=(Math.sin(elapsed/90*Math.PI*2)+1)/2;sun.intensity=.35+cycle*1.9;scene.background.setHSL(.54,.28,.28+cycle*.27);scene.fog.color.copy(scene.background);
+ if(Math.floor(elapsed)%5===0)updateHUD();
+ renderer.render(scene,camera);
+}
+requestAnimationFrame(animate);
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+msg('Добро пожаловать на остров!');
+</script>
+</body></html>
